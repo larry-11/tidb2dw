@@ -22,6 +22,90 @@ import (
 	"golang.org/x/exp/slices"
 )
 
+func CreateStorageIntegration(db *sql.DB, integrationName, workspaceURL, schema string) error {
+	sql, err := formatter.Format(`
+CREATE OR REPLACE STORAGE INTEGRATION {integrationName}
+TYPE = EXTERNAL_STAGE
+STORAGE_PROVIDER = '{schema}'
+ENABLED = TRUE
+STORAGE_ALLOWED_LOCATIONS = ('{url}')
+	`, formatter.Named{
+		"integrationName": EscapeString(integrationName),
+		"schema":          EscapeString(schema),
+		"url":             EscapeString(workspaceURL),
+	})
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(sql)
+	return err
+}
+
+func GetGCSServiceAccount(db *sql.DB, integrationName string) (string, error) {
+	var result string
+	sql, err := formatter.Format(`
+DESC STORAGE INTEGRATION {integrationName};
+	`, formatter.Named{
+		"integrationName": EscapeString(integrationName),
+	})
+	if err != nil {
+		return "", err
+	}
+	var property, propertyType, propertyValue, propertyDefault string
+	rows, err := db.Query(sql)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		if err := rows.Scan(&property, &propertyType, &propertyValue, &propertyDefault); err != nil {
+			return "", err
+		}
+
+		if property == "STORAGE_GCP_SERVICE_ACCOUNT" {
+			result = propertyValue
+			break
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return "", err
+	}
+
+	return result, err
+}
+
+func DropIntergration(db *sql.DB, integrationName string) error {
+	sql, err := formatter.Format(`
+DROP STORAGE INTEGRATION IF EXISTS {integrationName};
+`, formatter.Named{
+		"integrationName": EscapeString(integrationName),
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = db.Exec(sql)
+	return err
+}
+
+func CreateExternalGCSStage(db *sql.DB, integrationName, workspaceURL string) error {
+	sql, err := formatter.Format(`
+CREATE STAGE {integrationName}
+URL = '{workspaceURL}'
+STORAGE_INTEGRATION = 'GCS';
+`, formatter.Named{
+		"integrationName": EscapeString(integrationName),
+		"workspaceURL":    EscapeString(workspaceURL),
+	})
+	if err != nil {
+		return errors.Trace(err)
+	}
+	_, err = db.Exec(sql)
+	return err
+
+}
+
 func CreateExternalStage(db *sql.DB, stageName, s3WorkspaceURL string, cred *credentials.Value) error {
 	sql, err := formatter.Format(`
 CREATE OR REPLACE STAGE {stageName}
